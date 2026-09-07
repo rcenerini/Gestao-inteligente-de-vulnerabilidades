@@ -116,7 +116,7 @@ jobs:
     if: always()
     steps:
       - name: Send Teams notification
-        uses: jdcargile/ms-teams-notification@v1.3
+        uses: jdcargile/ms-teams-notification@1c56df87e8d19b39e89a1e1fa21e5d8b58ba69ec
         with:
           github-token: ${{ github.token }}
           ms-teams-webhook-uri: ${{ secrets.TEAMS_WEBHOOK_DEPLOYMENT }}

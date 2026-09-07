@@ -58,12 +58,12 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Run Snyk security scan
-        uses: snyk/actions/node@master
+        uses: snyk/actions/node@0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
       - name: Run OWASP Dependency Check
-        uses: dependency-check/Dependency-check_Action@main
+        uses: dependency-check/Dependency-check_Action@9e370fcab8ec104faf5156ab13ea3e1628e02fae
         with:
           project: 'SSCV'
           path: '.'
