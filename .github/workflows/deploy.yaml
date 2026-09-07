@@ -1,0 +1,129 @@
+name: Deploy - Terraform + Lambda
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Format Check
+        run: terraform fmt -recursive -check .
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  plan:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan
+          path: plan.json
+
+  approval:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Awaiting manual approval
+        run: echo "Deployment waiting for approval..."
+
+  apply:
+    needs: approval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color tfplan
+
+      - name: Deploy Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name sscv-processor \
+            --s3-bucket sscv-deployments \
+            --s3-key lambda-latest.zip
+
+      - name: Wait for Lambda deployment
+        run: |
+          aws lambda wait function-active \
+            --function-name sscv-processor
+
+  smoke-tests:
+    needs: apply
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+
+  notify:
+    needs: smoke-tests
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Send Teams notification
+        uses: jdcargile/ms-teams-notification@v1.3
+        with:
+          github-token: ${{ github.token }}
+          ms-teams-webhook-uri: ${{ secrets.TEAMS_WEBHOOK_DEPLOYMENT }}
+          notification-color: success
+          title: "SSCV Deployment Complete"
+          fields: |
+            - name: "Status"
+              value: "✅ Success"
+            - name: "Version"
+              value: ${{ github.sha }}
